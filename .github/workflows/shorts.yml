@@ -12,8 +12,11 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg jq python3 python3-pip open-jtalk \
-            hts-voice-nitech-jp-atr503-m001 fonts-noto-cjk
+          sudo apt-get install -y \
+            ffmpeg jq python3 python3-pip \
+            open-jtalk open-jtalk-mecab-naist-jdic \
+            hts-voice-nitech-jp-atr503-m001 \
+            fonts-noto-cjk
 
       - name: Extract payload
         run: |
@@ -24,13 +27,25 @@ jobs:
           VOICE_RATE=$(jq -r '.client_payload.voice_rate // 1.08' "$GITHUB_EVENT_PATH")
           echo "VOICE_RATE=$VOICE_RATE" >> $GITHUB_ENV
 
-      - name: TTS (OpenJTalk → voice.wav)
+      - name: Resolve OpenJTalk paths
+        id: jtalk
         run: |
-          open_jtalk \
-            -x /var/lib/mecab/dic/open-jtalk/naist-jdic \
-            -m /usr/share/hts-voice/nitech-jp-atr503-m001/nitech_jp_atr503_m001.htsvoice \
-            -r "$VOICE_RATE" \
-            -ow voice.wav < narration.txt
+          DIC=$(dpkg -L open-jtalk-mecab-naist-jdic | grep '/naist-jdic$' | head -n1)
+          VOICE=$(dpkg -L hts-voice-nitech-jp-atr503-m001 | grep '\.htsvoice$' | head -n1)
+          echo "dic=$DIC" >> $GITHUB_OUTPUT
+          echo "voice=$VOICE" >> $GITHUB_OUTPUT
+          test -n "$DIC" && test -n "$VOICE" || (echo "OpenJTalk dic/voice not found"; exit 1)
+
+      - name: TTS (OpenJTalk → voice.wav)
+        env:
+          DIC: ${{ steps.jtalk.outputs.dic }}
+          VOICE: ${{ steps.jtalk.outputs.voice }}
+          RATE: ${{ env.VOICE_RATE }}
+        run: |
+          # 手動Runでpayloadが空の時の保険
+          if ! [ -s narration.txt ]; then echo "テスト音声です。これは同期確認用のサンプルです。" > narration.txt; fi
+          open_jtalk -x "$DIC" -m "$VOICE" -r "${RATE:-1.08}" -ow voice.wav < narration.txt
+
 
       - name: Measure audio duration
         id: dur
