@@ -20,7 +20,7 @@ jobs:
 
       - name: Extract payload
         run: |
-          jq -r '.client_payload.segments_json' "$GITHUB_EVENT_PATH" > segments.json
+          jq -c '.client_payload.segments' "$GITHUB_EVENT_PATH" > segments.json
           jq -r '.client_payload.narration' "$GITHUB_EVENT_PATH" > narration.txt
           jq -r '.client_payload.bg_urls // empty | .[]' "$GITHUB_EVENT_PATH" > bg_urls.txt || true
           jq -r '.client_payload.bg_switch_at // empty | @json' "$GITHUB_EVENT_PATH" > bg_switch_at.json || echo "[]" > bg_switch_at.json
