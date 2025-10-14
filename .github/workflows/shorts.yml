@@ -2,7 +2,7 @@ name: build-shorts-url
 
 on:
   repository_dispatch:
-    types: [quote-shorts]
+    types: [*]
   workflow_dispatch:
 
 jobs:
