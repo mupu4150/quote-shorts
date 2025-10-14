@@ -1,13 +1,36 @@
 name: build-shorts-url
 
 on:
-  repository_dispatch:
-    types: [*]
   workflow_dispatch:
+    inputs:
+      segments_url:
+        description: "URL to segments.json (Gist raw URL)"
+        required: true
+        type: string
+      narration_url:
+        description: "URL to narration.txt (Gist raw URL)"
+        required: true
+        type: string
+      voice_rate:
+        description: "OpenJTalk rate (string, e.g. 1.08)"
+        required: false
+        default: "1.08"
+        type: string
+      bg_switch_at:
+        description: "JSON array (string) of switch seconds"
+        required: false
+        default: "[]"
+        type: string
+      bg_urls:
+        description: "JSON array (string) of background image URLs"
+        required: false
+        default: "[]"
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,13 +53,14 @@ jobs:
           echo "voice=$VOICE" >> $GITHUB_OUTPUT
           test -n "$DIC" -a -n "$VOICE" || (echo "OpenJTalk dic/voice not found"; exit 1)
 
-      # ← ここが「payloadを読む部分（URL版）」
-      - name: Fetch payload files
+      # --- payload 読み込み（URL版） ---
+      - name: Fetch payload files (from inputs)
         run: |
           python3 - <<'PY'
           import os, json, urllib.request
-          ev = json.load(open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8'))
-          cp = ev.get('client_payload', {}) or {}
+          IN = os.environ
+          seg_url = IN.get('INPUT_SEGMENTS_URL') or ""
+          nar_url = IN.get('INPUT_NARRATION_URL') or ""
 
           def fetch(url, path, default=""):
             if not url:
@@ -47,13 +71,19 @@ jobs:
             except Exception:
               open(path,'w',encoding='utf-8').write(default)
 
-          # フォールバック（手動Run対策）
-          fetch(cp.get('segments_url'), 'segments.json', '[{"text":"テスト字幕です。"}]')
-          fetch(cp.get('narration_url'), 'narration.txt', 'テスト音声です。')
-          json.dump({"bg_switch_at": cp.get('bg_switch_at', []),
-                     "bg_urls": cp.get('bg_urls', [])},
+          fetch(seg_url, 'segments.json', '[{"text":"テスト字幕です。"}]')
+          fetch(nar_url, 'narration.txt', 'テスト音声です。')
+
+          # 文字列として渡ってくる inputs を取り込む
+          rate = IN.get('INPUT_VOICE_RATE') or '1.08'
+          try: switch = json.loads(IN.get('INPUT_BG_SWITCH_AT') or "[]")
+          except: switch = []
+          try: bg = json.loads(IN.get('INPUT_BG_URLS') or "[]")
+          except: bg = []
+
+          json.dump({"bg_switch_at": switch, "bg_urls": bg},
                     open('bg.json','w',encoding='utf-8'))
-          open('rate.txt','w').write(str(cp.get('voice_rate',1.08)))
+          open('rate.txt','w').write(rate)
           PY
           echo "VOICE_RATE=$(cat rate.txt)" >> $GITHUB_ENV
 
@@ -156,7 +186,7 @@ jobs:
           import json, urllib.request
           sched = json.load(open("bg_sched.json","r",encoding="utf-8"))
           lines=[]
-          lastfile = None
+          lastfile=None
           for i, it in enumerate(sched,1):
             out=f"bg{i}.jpg"
             try:
@@ -166,7 +196,7 @@ jobs:
             dur = max(0.2, float(it["end"])-float(it["start"]))
             lines.append(f"file {out}\n")
             lines.append(f"duration {dur}\n")
-            lastfile = out
+            lastfile=out
           if lastfile:
             lines.append(f"file {lastfile}\n")
           open("bglist.txt","w",encoding="utf-8").writelines(lines)
