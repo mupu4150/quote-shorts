@@ -220,3 +220,22 @@ jobs:
           name: short-${{ github.run_id }}
           path: short.mp4
           retention-days: 7
+          - name: Ensure output folder
+      run: mkdir -p out
+
+    # 例: 生成物を out に集める
+    # - name: Move outputs
+    #   run: |
+    #     mv build/short.mp4 out/short.mp4
+    #     # もしくは zip するなら:
+    #     # zip -j out/shorts.zip build/short.mp4 subtitles.srt
+
+      - name: Upload artifact (short.mp4)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: short
+          path: out/short.mp4         # 複数なら "out/**"
+          if-no-files-found: error
+          retention-days: 7
+  
