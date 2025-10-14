@@ -1,15 +1,13 @@
-name: build-shorts-b64gz
+name: build-shorts-url
 
 on:
   repository_dispatch:
     types: [quote-shorts]
-  # 手動テスト用（payloadが空でも最後まで動くフォールバック付き）
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,7 +21,6 @@ jobs:
             hts-voice-nitech-jp-atr503-m001 \
             fonts-noto-cjk
 
-      # OpenJTalk の辞書と音声ファイルのパス検出
       - name: Resolve OpenJTalk paths
         id: jtalk
         run: |
@@ -33,42 +30,30 @@ jobs:
           echo "voice=$VOICE" >> $GITHUB_OUTPUT
           test -n "$DIC" -a -n "$VOICE" || (echo "OpenJTalk dic/voice not found"; exit 1)
 
-      # ③ payload を読む部分（gzip+Base64 を復元／旧Base64にも後方互換）
-      - name: Decode payload (gunzip Base64 → files)
+      # ← ここが「payloadを読む部分（URL版）」
+      - name: Fetch payload files
         run: |
           python3 - <<'PY'
-          import os, json, base64, gzip
-
+          import os, json, urllib.request
           ev = json.load(open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8'))
           cp = ev.get('client_payload', {}) or {}
 
-          def get_text(cp, key_gz, key_b64, default=""):
-            if cp.get(key_gz):
-              try:
-                return gzip.decompress(base64.b64decode(cp[key_gz])).decode('utf-8')
-              except Exception:
-                pass
-            if cp.get(key_b64):
-              try:
-                return base64.b64decode(cp[key_b64]).decode('utf-8')
-              except Exception:
-                pass
-            return default
+          def fetch(url, path, default=""):
+            if not url:
+              open(path,'w',encoding='utf-8').write(default); return
+            try:
+              with urllib.request.urlopen(url) as r:
+                open(path,'wb').write(r.read())
+            except Exception:
+              open(path,'w',encoding='utf-8').write(default)
 
-          segs_json = get_text(cp, 'segments_b64_gz', 'segments_b64',
-                               json.dumps([{"text":"テスト字幕です。"}], ensure_ascii=False))
-          narr      = get_text(cp, 'narration_b64_gz', 'narration_b64',
-                               "テスト音声です。これは同期確認用のサンプルです。")
-          rate      = cp.get('voice_rate', 1.08)
-          bg_switch = cp.get('bg_switch_at', [])
-          bg_urls   = cp.get('bg_urls', [])
-
-          # 出力
-          open('segments.json','w',encoding='utf-8').write(segs_json)
-          open('narration.txt','w',encoding='utf-8').write(narr)
-          json.dump({"bg_switch_at": bg_switch, "bg_urls": bg_urls},
+          # フォールバック（手動Run対策）
+          fetch(cp.get('segments_url'), 'segments.json', '[{"text":"テスト字幕です。"}]')
+          fetch(cp.get('narration_url'), 'narration.txt', 'テスト音声です。')
+          json.dump({"bg_switch_at": cp.get('bg_switch_at', []),
+                     "bg_urls": cp.get('bg_urls', [])},
                     open('bg.json','w',encoding='utf-8'))
-          open('rate.txt','w',encoding='utf-8').write(str(rate))
+          open('rate.txt','w').write(str(cp.get('voice_rate',1.08)))
           PY
           echo "VOICE_RATE=$(cat rate.txt)" >> $GITHUB_ENV
 
@@ -78,7 +63,7 @@ jobs:
           VOICE: ${{ steps.jtalk.outputs.voice }}
           RATE: ${{ env.VOICE_RATE }}
         run: |
-          [ -s narration.txt ] || echo "テスト音声です。これは同期確認用のサンプルです。" > narration.txt
+          [ -s narration.txt ] || echo "テスト音声です。" > narration.txt
           open_jtalk -x "$DIC" -m "$VOICE" -r "${RATE:-1.08}" -ow voice.wav < narration.txt
 
       - name: Measure audio duration
@@ -183,7 +168,7 @@ jobs:
             lines.append(f"duration {dur}\n")
             lastfile = out
           if lastfile:
-            lines.append(f"file {lastfile}\n")  # concat demuxer末尾対策
+            lines.append(f"file {lastfile}\n")
           open("bglist.txt","w",encoding="utf-8").writelines(lines)
           PY
 
