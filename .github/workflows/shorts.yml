@@ -3,32 +3,23 @@ name: build-shorts-url
 on:
   workflow_dispatch:
     inputs:
-      run_token:
-        description: "unique token to identify this run (set by Dify, used for polling)"
-        required: true
-        type: string
       segments_url:
-        description: "URL to segments.json (from Dify)"
-        required: true
+        description: "raw URL to segments.json (public)"
         type: string
+        required: true
       narration_url:
-        description: "URL to narration audio/text (from Dify)"
+        description: "raw URL to narration.txt or audio (public)"
+        type: string
         required: true
-        type: string
-      voice_rate:
-        description: "reserved (not used in this minimal pipe)"
-        required: false
-        default: "1.0"
-        type: string
 
-# ラン名に run_token を付けて、Dify 側のポーリングで「この実行」を特定しやすくする
-run-name: ${{ inputs.run_token }}
+# Dify側で判別しやすいよう実行名にURL末尾を入れておく（任意）
+run-name: "shorts: ${{ inputs.segments_url }}"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout (optional)
         uses: actions/checkout@v4
 
       - name: Install deps
@@ -40,44 +31,43 @@ jobs:
         run: |
           mkdir -p inputs out work
 
-      - name: Download inputs from Dify
+      - name: Download inputs
         run: |
-          set -e
+          set -euo pipefail
           echo "Downloading segments.json..."
           curl -fsSL --retry 3 "${{ inputs.segments_url }}" -o inputs/segments.json
 
-          echo "Downloading narration (audio or text)..."
+          echo "Downloading narration..."
           curl -fsSL --retry 3 "${{ inputs.narration_url }}" -o inputs/narration.bin
 
-          echo "segments.json head:"
+          echo "Head of segments.json:"
           head -c 300 inputs/segments.json || true
           echo
-          echo "narration file type:"
+          echo "File type of narration.bin:"
           file inputs/narration.bin || true
 
-      - name: Normalize narration file
+      - name: Normalize narration (make sure we have audio)
         run: |
-          # narration がテキストなら仮の無音オーディオを作って結線テストが通るようにする
+          set -euo pipefail
           if file inputs/narration.bin | grep -qi "text"; then
             mv inputs/narration.bin inputs/narration.txt
-            # 1秒の無音を作成（配線テスト用）
-            ffmpeg -f lavfi -i anullsrc=r=44100:cl=mono -t 1 -q:a 9 -acodec libmp3lame work/silent.mp3 -y
-            cp work/silent.mp3 inputs/narration.mp3
+            # create 1s silent audio for wiring test
+            ffmpeg -f lavfi -i anullsrc=r=44100:cl=mono -t 1 -q:a 9 -acodec libmp3lame inputs/narration.mp3 -y
           else
-            # 拡張子が無い場合に一旦 .wav として扱ってみる
-            mv inputs/narration.bin inputs/narration.wav
+            # try simple extension mapping
+            mv inputs/narration.bin inputs/narration.wav || true
           fi
 
-      - name: Build placeholder video (wires sanity check)
+      - name: Build placeholder vertical video
         run: |
-          # 語りの長さを取得（失敗したら5秒）
+          set -euo pipefail
+          # try to detect duration from provided audio; fallback to 5s
           DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 inputs/narration.wav 2>/dev/null || \
                 ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 inputs/narration.mp3 2>/dev/null || echo 5)
 
-          # 縦動画 1080x1920 の黒背景を作成
+          # make 1080x1920 black background
           ffmpeg -f lavfi -i color=c=black:s=1080x1920:d=${DUR} -r 30 -pix_fmt yuv420p work/blank.mp4 -y
 
-          # 音声があれば合成、無ければ映像のみ
           if [ -f inputs/narration.wav ]; then
             ffmpeg -i work/blank.mp4 -i inputs/narration.wav -c:v libx264 -c:a aac -shortest out/short.mp4 -y
           elif [ -f inputs/narration.mp3 ]; then
@@ -87,8 +77,7 @@ jobs:
             cp work/blank.mp4 out/short.mp4
           fi
 
-      # ===== ここが重要：Artifact を必ず出す =====
-      - name: Upload artifact (short.mp4 + segments.json)
+      - name: Upload artifact (video + segments)
         if: always()
         uses: actions/upload-artifact@v4
         with:
